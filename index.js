@@ -75,7 +75,7 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
 
       const domain = process.env.MAILGUN_DOMAIN; // billing.yokweb.com
       const amount = (inv.amount_paid / 100).toFixed(2) + " " + String(inv.currency || "").toUpperCase();
-      const subject = "Payment received — Yokweb";
+      const subject = "Payment received - Yokweb";
 
       const text = [
         `Hi,`,
@@ -116,3 +116,4 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
 app.get("/", (_req, res) => res.status(200).send("OK"));
 const port = process.env.PORT || 8080;
 app.listen(port, () => console.log("Listening on", port));
+
