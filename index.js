@@ -1,19 +1,14 @@
 ﻿import express from "express";
 import bodyParser from "body-parser";
 import Stripe from "stripe";
-import Mailgun from "mailgun.js";
-import formData from "form-data";
 
 const app = express();
 
-// Helper: pick recipient
 function resolveRecipient(inv, customerObj) {
-  // Prefer invoice.customer_email, then customer.email
-  const invEmail = inv.customer_email || inv.account_email; // sometimes present
+  const invEmail = inv.customer_email || inv.account_email;
   const custEmail = customerObj && customerObj.email;
   let to = invEmail || custEmail || null;
 
-  // TEST override: if env TEST_TO is set, or if to ends with example.com, send to TEST_TO
   const testTo = process.env.TEST_TO;
   if (testTo && (!to || /@example\.com$/i.test(to))) {
     console.log("TEST override: routing mail to TEST_TO:", testTo, " (original to:", to, ")");
@@ -67,25 +62,21 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
         return res.json({ received: true, mailed: false });
       }
 
-      const mg = new Mailgun(formData).client({
-        username: "api",
-        key: process.env.MAILGUN_EU_API_KEY,
-        url: process.env.MAILGUN_API_URL || "https://api.eu.mailgun.net",
-      });
+      // --- Mailgun direct HTTP (UTF-8 safe) ---
+      const domain = process.env.MAILGUN_DOMAIN; // e.g., billing.yokweb.com
+      const apiBase = process.env.MAILGUN_API_URL || "https://api.eu.mailgun.net";
+      const apiKey  = process.env.MAILGUN_EU_API_KEY;
 
-      const domain = process.env.MAILGUN_DOMAIN; // billing.yokweb.com
       const amount = (inv.amount_paid / 100).toFixed(2) + " " + String(inv.currency || "").toUpperCase();
-      const subject = "Payment received - Yokweb";
-
+      const subject = "Payment received - Yokweb"; // ASCII
       const text = [
-        `Hi,`,
-        `We've received your payment.`,
+        "Hi,",
+        "We've received your payment.",
         `Invoice: ${inv.number || inv.id}`,
         `Amount: ${amount}`,
-        `Thanks,`,
-        `Yokweb`,
+        "Thanks,",
+        "Yokweb"
       ].join("\r\n");
-
       const html = `
         <p>Hi,</p>
         <p>We've received your payment.</p>
@@ -94,17 +85,33 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
         <p>Thanks,<br>Yokweb</p>
       `;
 
-      console.log("Sending Mailgun message to:", to);
-      const resp = await mg.messages.create(domain, {
-        from: "Yokweb Billing <no-reply@billing.yokweb.com>",
-        to,
-        subject,
-        text,
-        html,
-        "h:Reply-To": "billing@yokweb.com",
-        "o:tracking": "false",
+      const params = new URLSearchParams();
+      params.append("from", "Yokweb Billing <no-reply@billing.yokweb.com>");
+      params.append("to", to);
+      params.append("subject", subject);
+      params.append("text", text);
+      params.append("html", html);
+      params.append("h:Reply-To", "billing@yokweb.com");
+      params.append("o:tracking", "false");
+
+      const auth = Buffer.from(`api:${apiKey}`, "utf8").toString("base64");
+      const resp = await fetch(`${apiBase}/v3/${domain}/messages`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Basic ${auth}`,
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: params.toString()
       });
-      console.log("Mailgun queued id:", resp?.id || resp);
+
+      if (!resp.ok) {
+        const body = await resp.text();
+        throw new Error(`Mailgun HTTP ${resp.status}: ${body}`);
+      } else {
+        const body = await resp.text();
+        console.log("Mailgun queued:", body);
+      }
+      // --- end Mailgun HTTP ---
     }
   } catch (e) {
     console.error("Handler error:", e);
@@ -116,4 +123,3 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
 app.get("/", (_req, res) => res.status(200).send("OK"));
 const port = process.env.PORT || 8080;
 app.listen(port, () => console.log("Listening on", port));
-
