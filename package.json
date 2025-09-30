@@ -1,8 +1,8 @@
-﻿{
+{
   "name": "stripe-webhooks-mailer",
   "private": true,
   "type": "module",
-  "dependencies": {
+  "dependencies": { "stripe": "^15.0.0",
     "express": "^4.19.2",
     "body-parser": "^1.20.2"
   },
