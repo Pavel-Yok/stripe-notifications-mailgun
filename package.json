@@ -1,0 +1,12 @@
+﻿{
+  "name": "stripe-webhooks-mailer",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "express": "^4.19.2",
+    "body-parser": "^1.20.2"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}
