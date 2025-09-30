@@ -1,17 +1,14 @@
-{
-  "name": "stripe-webhooks-mailer",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "body-parser": "^1.20.2",
-    "express": "^4.19.2",
-    "form-data": "^4.0.0",
-    "mailgun": {
-      "js": "^10.2.3"
-    },
-    "stripe": "^15.0.0"
-  },
-  "scripts": {
-    "start": "node index.js"
-  }
+﻿{
+    "name":  "stripe-webhooks-mailer",
+    "private":  true,
+    "type":  "module",
+    "dependencies":  {
+                         "body-parser":  "^1.20.2",
+                         "express":  "^4.19.2",
+                         "form-data":  "^4.0.0",
+                         "stripe":  "^15.0.0"
+                     },
+    "scripts":  {
+                    "start":  "node index.js"
+                }
 }
