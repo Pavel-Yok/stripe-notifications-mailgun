@@ -13,7 +13,6 @@ env:
   REGION: europe-west1
   SERVICE: stripe-webhooks-mailer
   REPO: webhooks-repo
-  IMAGE: europe-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env:REPO }}/stripe-webhooks-mailer:${{ github.sha }}
 
 jobs:
   deploy:
@@ -28,6 +27,10 @@ jobs:
           service_account: github-cicd@yokweb-billing-001.iam.gserviceaccount.com
 
       - uses: google-github-actions/setup-gcloud@v2
+
+      # Build IMAGE string and export to job env
+      - name: Set IMAGE name
+        run: echo "IMAGE=europe-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/stripe-webhooks-mailer:${{ github.sha }}" >> $GITHUB_ENV
 
       - name: Configure Docker auth (Artifact Registry)
         run: gcloud auth configure-docker europe-docker.pkg.dev --quiet
