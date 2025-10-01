@@ -1,0 +1,34 @@
+name: Smoke
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Auth to Google Cloud (WIF)
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/556400187545/locations/global/workloadIdentityPools/github-pool/providers/github-oidc
+          service_account: github-cicd@yokweb-billing-001.iam.gserviceaccount.com
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: gcloud diagnostics
+        run: |
+          set -x
+          gcloud --version
+          gcloud auth list
+          gcloud projects describe yokweb-billing-001 --format="value(projectNumber)"
