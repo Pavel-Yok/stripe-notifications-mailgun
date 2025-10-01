@@ -8,18 +8,13 @@ permissions:
   id-token: write
   contents: read
 
-env:
-  PROJECT_ID: yokweb-billing-001
-  REGION: europe-west1
-  SERVICE: stripe-webhooks-mailer
-  REPO: webhooks-repo
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      # Auth to GCP via Workload Identity Federation (your provider)
       - id: auth
         uses: google-github-actions/auth@v2
         with:
@@ -28,9 +23,14 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      # Build IMAGE string and export to job env
-      - name: Set IMAGE name
-        run: echo "IMAGE=europe-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/stripe-webhooks-mailer:${{ github.sha }}" >> $GITHUB_ENV
+      # Define all env vars via GITHUB_ENV (no expressions in YAML)
+      - name: Set deployment env
+        run: |
+          echo "PROJECT_ID=yokweb-billing-001" >> $GITHUB_ENV
+          echo "REGION=europe-west1" >> $GITHUB_ENV
+          echo "SERVICE=stripe-webhooks-mailer" >> $GITHUB_ENV
+          echo "REPO=webhooks-repo" >> $GITHUB_ENV
+          echo "IMAGE=europe-docker.pkg.dev/yokweb-billing-001/webhooks-repo/stripe-webhooks-mailer:${GITHUB_SHA}" >> $GITHUB_ENV
 
       - name: Configure Docker auth (Artifact Registry)
         run: gcloud auth configure-docker europe-docker.pkg.dev --quiet
@@ -38,16 +38,16 @@ jobs:
       - name: Build & push image with Cloud Build
         run: |
           gcloud builds submit \
-            --project $PROJECT_ID \
-            --tag $IMAGE
+            --project "$PROJECT_ID" \
+            --tag "$IMAGE"
 
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy $SERVICE \
-            --project $PROJECT_ID \
-            --region $REGION \
-            --image $IMAGE \
-            --service-account stripe-webhooks-mailer-sa@$PROJECT_ID.iam.gserviceaccount.com \
+          gcloud run deploy "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --image "$IMAGE" \
+            --service-account "stripe-webhooks-mailer-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
             --allow-unauthenticated \
             --memory 512Mi --cpu 1 --concurrency 50 --timeout 30 \
             --set-env-vars MAILGUN_API_URL=https://api.eu.mailgun.net \
