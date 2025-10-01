@@ -1,50 +1,50 @@
-﻿name: Deploy to Cloud Run (placeholder)
+name: Deploy to Cloud Run
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
 
-env:
-  PROJECT_ID: yokweb-billing-001
-  REGION: europe-central2
-  SERVICE: stripe-webhooks-mailer
-  REPO: webhooks-repo
-  IMAGE: europe-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.SERVICE }}:github-${{ github.sha }}
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Auth to Google Cloud (WIF)
+        id: auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_CI_SERVICE_ACCOUNT }}
+          workload_identity_provider: projects/556400187545/locations/global/workloadIdentityPools/github-pool/providers/github-oidc
+          service_account: github-cicd@yokweb-billing-001.iam.gserviceaccount.com
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Enable services (idempotent)
-        run: |
-          gcloud config set project $PROJECT_ID
-          gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com logging.googleapis.com
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker europe-docker.pkg.dev --quiet
 
       - name: Build & push image with Cloud Build
         run: |
-          gcloud builds submit --tag "$IMAGE"
+          IMAGE="europe-docker.pkg.dev/yokweb-billing-001/webhooks-repo/stripe-webhooks-mailer:${GITHUB_SHA}"
+          echo "Using image: $IMAGE"
+          gcloud builds submit \
+            --project yokweb-billing-001 \
+            --tag "$IMAGE"
 
-      - name: Deploy to Cloud Run (placeholder)
+      - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy "$SERVICE" \
+          IMAGE="europe-docker.pkg.dev/yokweb-billing-001/webhooks-repo/stripe-webhooks-mailer:${GITHUB_SHA}"
+          gcloud run deploy stripe-webhooks-mailer \
+            --project yokweb-billing-001 \
+            --region europe-west1 \
             --image "$IMAGE" \
-            --region "$REGION" \
-            --service-account "stripe-webhooks-mailer-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+            --service-account stripe-webhooks-mailer-sa@yokweb-billing-001.iam.gserviceaccount.com \
             --allow-unauthenticated \
             --memory 512Mi --cpu 1 --concurrency 50 --timeout 30 \
-            --set-env-vars MAILGUN_API_URL=https://api.eu.mailgun.net
+            --set-env-vars MAILGUN_API_URL=https://api.eu.mailgun.net \
+            --set-secrets STRIPE_SECRET_KEY=STRIPE_SECRET_KEY:latest,STRIPE_WEBHOOK_SECRET=STRIPE_WEBHOOK_SECRET:latest,MAILGUN_EU_API_KEY=MAILGUN_EU_API_KEY:latest,MAILGUN_DOMAIN=MAILGUN_DOMAIN:latest
