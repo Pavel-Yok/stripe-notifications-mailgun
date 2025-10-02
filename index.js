@@ -9,7 +9,7 @@ import {Storage} from "@google-cloud/storage";
 
 const app = express();
 
-// -------- Config: brands → Mailgun domain + headers --------
+// -------- Config: brands → Mailgun domain + headers -------
 const BRANDS = {
   yokweb: {
     domain: "billing.yokweb.com",
