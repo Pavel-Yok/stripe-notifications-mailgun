@@ -25,7 +25,7 @@ Optional:
 Notes:
 - From addresses use verified SES domains; mailbox for no-reply is not required.
 - Reply-To should be a real inbox you monitor.
-- SES creds come via AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY. 
+- SES creds come via AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
 ========================= */
 
 const BRAND_DEFAULT = (process.env.BRAND_DEFAULT || "yokweb").toLowerCase();
@@ -114,6 +114,24 @@ async function sendWithSES({ region, from, replyTo, to, subject, text, html }) {
   return resp;
 }
 /* ========================= */
+
+/* ====== Local suppression cache (24h TTL) ====== */
+const SUPPRESS_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const suppressed = new Map(); // email -> firstSeenTs
+
+function isSuppressed(email) {
+  const ts = suppressed.get(email);
+  if (!ts) return false;
+  if (Date.now() - ts > SUPPRESS_TTL_MS) {
+    suppressed.delete(email);
+    return false;
+  }
+  return true;
+}
+function noteSuppressed(email) {
+  suppressed.set(email, Date.now());
+}
+/* ============================================== */
 
 /* ====== content helpers (fallbacks) ====== */
 function formatAmount(inv) {
@@ -266,23 +284,30 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
       return res.json({ received: true, mailed: false });
     }
 
+    // Skip locally suppressed recipients
+    if (isSuppressed(to)) {
+      console.warn("Local-suppressed recipient; skipping send:", to);
+      return res.json({ received: true, mailed: false, suppressed: true });
+    }
+
     // Choose sender by brand
     const cfg = BRAND_CFG[brand] || BRAND_CFG[BRAND_DEFAULT];
 
-    // Try to load a GCS template for this service/locale
+    // Detect service from metadata (invoice → price → product), accept both "service" and "serviceID"
     const service =
-  pickMeta(inv, "service") ||
-  pickMeta(inv, "serviceid") ||
-  pickMeta(lineMeta?.price, "service") ||
-  pickMeta(lineMeta?.price, "serviceid") ||
-  pickMeta(lineMeta?.product, "service") ||
-  pickMeta(lineMeta?.product, "serviceid") ||
-  "invoice-paid";
+      pickMeta(inv, "service") ||
+      pickMeta(inv, "serviceid") ||
+      pickMeta(lineMeta?.price, "service") ||
+      pickMeta(lineMeta?.price, "serviceid") ||
+      pickMeta(lineMeta?.product, "service") ||
+      pickMeta(lineMeta?.product, "serviceid") ||
+      "invoice-paid";
 
+    // Try to load a GCS template for this service/locale
     const amount = formatAmount(inv);
     const invoiceNo = inv.number || inv.id;
 
-    // If template found, render; otherwise use full buildMessage() fallback
+    // If template found, render; otherwise use full buildMessage() fallback (subject/text/html)
     let subject, text, html, templateSource;
     const gcsHtml =
       (await loadTemplate({ brand, service, locale })) ||
@@ -325,6 +350,11 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
       return res.json({ received: true, mailed: true });
     } catch (err) {
       console.error("SES send failed:", err);
+      // If SES says address is on suppression list, remember it locally
+      const msg = String(err && (err.message || err.toString() || ""));
+      if (/suppression list|suppressed|complaint/i.test(msg)) {
+        noteSuppressed(to);
+      }
       // acknowledge to avoid Stripe retry storms
       return res.json({ received: true, mailed: false, error: "ses_send_failed" });
     }
