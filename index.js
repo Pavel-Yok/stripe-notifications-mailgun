@@ -1,11 +1,15 @@
 // index.js
-// Stripe → Amazon SES webhook mailer (multi-brand, multi-region, metadata-aware)
-// Node 18+ (ESM). Requires deps: express, body-parser, stripe, @aws-sdk/client-sesv2, @google-cloud/storage
+// Stripe → Amazon SES webhook mailer (multi-brand, multi-locale, metadata-aware)
+// Node 18+ (ESM). Deps: express, body-parser, stripe, @aws-sdk/client-sesv2, @google-cloud/storage
 
 import express from "express";
 import bodyParser from "body-parser";
 import Stripe from "stripe";
-import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+import {
+  SESv2Client,
+  SendEmailCommand,
+  GetSuppressedDestinationCommand,
+} from "@aws-sdk/client-sesv2";
 import { Storage } from "@google-cloud/storage";
 
 /* ========= ENV =========
@@ -19,14 +23,14 @@ Optional:
   SES_REPLY_TO_YOKWEB="billing@yokweb.com"
   SES_FROM_TRUEWEB="Trueweb Billing <no-reply@billing.trueweb.pl>"
   SES_REPLY_TO_TRUEWEB="billing@trueweb.pl"
-  TEST_TO="you@example.com"               # override for tests / @example.com recipients
-  TEMPLATES_BUCKET="email-templates-yokweb-trueweb"  # GCS bucket for templates
-  SES_CONFIG_SET="deliverability-prod"    # optional SES Configuration Set name
+  TEST_TO="you@example.com"                         # override for tests / @example.com recipients
+  TEMPLATES_BUCKET="email-templates-yokweb-trueweb" # GCS bucket for templates
+  SES_CONFIG_SET="deliverability-prod"              # optional SES Configuration Set name
 
 Notes:
 - From addresses use verified SES domains; mailbox for no-reply is not required.
 - Reply-To should be a real inbox you monitor.
-- SES creds come via AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
+- SES creds via AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
 ========================= */
 
 const BRAND_DEFAULT = (process.env.BRAND_DEFAULT || "yokweb").toLowerCase();
@@ -39,7 +43,9 @@ const BRAND_CFG = {
   },
   trueweb: {
     region: "eu-central-1", // Frankfurt
-    from: process.env.SES_FROM_TRUEWEB || "Trueweb Billing <no-reply@billing.trueweb.pl>",
+    from:
+      process.env.SES_FROM_TRUEWEB ||
+      "Trueweb Billing <no-reply@billing.trueweb.pl>",
     replyTo: process.env.SES_REPLY_TO_TRUEWEB || "billing@trueweb.pl",
   },
 };
@@ -132,6 +138,31 @@ async function sendWithSES({
   const resp = await ses.send(cmd);
   console.log("SES MessageId:", resp?.MessageId, "to:", to, "region:", region);
   return resp;
+}
+
+/* ---- SES account-level suppression check (centralized) ---- */
+async function isSuppressedInSES({ region, email }) {
+  try {
+    const ses = getSesClient(region);
+    const cmd = new GetSuppressedDestinationCommand({ EmailAddress: email });
+    const resp = await ses.send(cmd);
+    if (resp?.SuppressionAttributes?.Reason) {
+      console.warn(
+        "SES-suppressed recipient; reason:",
+        resp.SuppressionAttributes.Reason,
+        "email:",
+        email
+      );
+      return true;
+    }
+    return false;
+  } catch (e) {
+    // NotFoundException => not suppressed; anything else => log + allow send
+    const code = e?.name || "";
+    if (/NotFoundException/i.test(code)) return false;
+    console.warn("SES suppression check failed (treating as not suppressed):", code || e?.message || e);
+    return false;
+  }
 }
 /* ========================= */
 
@@ -239,152 +270,176 @@ function resolveRecipient(inv) {
 const app = express();
 
 // RAW body required for Stripe signature verification
-app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, res) => {
-  const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  const stripeKey = process.env.STRIPE_SECRET_KEY;
-  if (!endpointSecret || !stripeKey) {
-    console.error("Missing STRIPE_WEBHOOK_SECRET or STRIPE_SECRET_KEY");
-    return res.status(500).send("Server not configured");
-  }
+app.post(
+  "/webhook",
+  bodyParser.raw({ type: "application/json" }),
+  async (req, res) => {
+    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    const stripeKey = process.env.STRIPE_SECRET_KEY;
+    if (!endpointSecret || !stripeKey) {
+      console.error("Missing STRIPE_WEBHOOK_SECRET or STRIPE_SECRET_KEY");
+      return res.status(500).send("Server not configured");
+    }
 
-  const stripe = new Stripe(stripeKey);
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(req.body, req.headers["stripe-signature"], endpointSecret);
-  } catch (err) {
-    console.error("Signature verification failed:", err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  console.log("Stripe event:", event.type);
-
-  if (event.type === "invoice.paid") {
-    const invBasic = event.data.object;
-
-    // Expand invoice to get lines (price.product) + customer
-    let inv, customerObj = null, lineMeta = null;
+    const stripe = new Stripe(stripeKey);
+    let event;
     try {
-      inv = await stripe.invoices.retrieve(invBasic.id, {
-        expand: ["lines.data.price.product", "customer"],
-      });
-    } catch (e) {
-      console.warn("Could not expand invoice; falling back to payload:", e?.message);
-      inv = invBasic;
-    }
-
-    // Retrieve customer if needed
-    try {
-      if (typeof inv.customer === "string") {
-        customerObj = await stripe.customers.retrieve(inv.customer);
-      } else if (inv.customer?.email || inv.customer?.metadata) {
-        customerObj = inv.customer;
-      }
-    } catch (e) {
-      console.warn("Could not retrieve customer:", e?.message);
-    }
-
-    // First line price/product metadata (if any)
-    try {
-      const line = inv?.lines?.data?.[0];
-      lineMeta = {
-        price: line?.price,
-        product: line?.price?.product && typeof line.price.product !== "string" ? line.price.product : null,
-      };
-    } catch {
-      /* noop */
-    }
-
-    // Resolve brand + locale (order: invoice → customer → price/product → defaults)
-    const { brand, locale } = resolveBrandLocale({ inv, customer: customerObj, lineMeta });
-
-    // Resolve recipient
-    let to = resolveRecipient(inv) || customerObj?.email || null;
-    if (!to) {
-      console.warn("No recipient email found; skipping send.");
-      return res.json({ received: true, mailed: false });
-    }
-
-    // Skip locally suppressed recipients
-    if (isSuppressed(to)) {
-      console.warn("Local-suppressed recipient; skipping send:", to);
-      return res.json({ received: true, mailed: false, suppressed: true });
-    }
-
-    // Choose sender by brand
-    const cfg = BRAND_CFG[brand] || BRAND_CFG[BRAND_DEFAULT];
-
-    // Detect service from metadata (invoice → price → product), accept both "service" and "serviceID"
-    const service =
-      pickMeta(inv, "service") ||
-      pickMeta(inv, "serviceid") ||
-      pickMeta(lineMeta?.price, "service") ||
-      pickMeta(lineMeta?.price, "serviceid") ||
-      pickMeta(lineMeta?.product, "service") ||
-      pickMeta(lineMeta?.product, "serviceid") ||
-      "invoice-paid";
-
-    // Try to load a GCS template for this service/locale
-    const amount = formatAmount(inv);
-    const invoiceNo = inv.number || inv.id;
-
-    // If template found, render; otherwise use full buildMessage() fallback (subject/text/html)
-    let subject, text, html, templateSource;
-    const gcsHtml =
-      (await loadTemplate({ brand, service, locale })) ||
-      (await loadTemplate({ brand, service, locale: "en" }));
-
-    if (gcsHtml) {
-      templateSource = "GCS";
-      if (locale === "pl") {
-        subject = `Płatność otrzymana — ${brand === "trueweb" ? "Trueweb" : "Yokweb"}`;
-        text =
-          `Dzień dobry,\r\nOtrzymaliśmy Twoją płatność.\r\n` +
-          `Faktura: ${invoiceNo}\r\nKwota: ${amount}\r\n` +
-          `Dziękujemy,\r\n${brand === "trueweb" ? "Trueweb" : "Yokweb"}`;
-      } else {
-        subject = `Payment received — ${brand === "trueweb" ? "Trueweb" : "Yokweb"}`;
-        text =
-          `Hi,\r\nWe've received your payment.\r\n` +
-          `Invoice: ${invoiceNo}\r\nAmount: ${amount}\r\n` +
-          `Thanks,\r\n${brand === "trueweb" ? "Trueweb" : "Yokweb"}`;
-      }
-      html = renderTemplate(gcsHtml, { invoiceNo, amount });
-    } else {
-      templateSource = "fallback";
-      ({ subject, text, html } = buildMessage({ brand, inv, locale }));
-    }
-
-    // diagnostic log line for quick grepping
-    console.log(`X-Brand=${brand} X-Locale=${locale} X-Service=${service} Template=${templateSource}`);
-
-    try {
-      await sendWithSES({
-        region: cfg.region,
-        from: cfg.from,
-        replyTo: cfg.replyTo,
-        to,
-        subject,
-        text,
-        html,
-        brand,
-        service,
-        locale,
-      });
-      return res.json({ received: true, mailed: true });
+      event = stripe.webhooks.constructEvent(
+        req.body,
+        req.headers["stripe-signature"],
+        endpointSecret
+      );
     } catch (err) {
-      console.error("SES send failed:", err);
-      // If SES says address is on suppression list, remember it locally
-      const msg = String(err && (err.message || err.toString() || ""));
-      if (/suppression list|suppressed|complaint/i.test(msg)) {
-        noteSuppressed(to);
-      }
-      // acknowledge to avoid Stripe retry storms
-      return res.json({ received: true, mailed: false, error: "ses_send_failed" });
+      console.error("Signature verification failed:", err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
     }
-  }
 
-  return res.json({ received: true });
-});
+    console.log("Stripe event:", event.type);
+
+    if (event.type === "invoice.paid") {
+      const invBasic = event.data.object;
+
+      // Expand invoice to get lines (price.product) + customer
+      let inv,
+        customerObj = null,
+        lineMeta = null;
+      try {
+        inv = await stripe.invoices.retrieve(invBasic.id, {
+          expand: ["lines.data.price.product", "customer"],
+        });
+      } catch (e) {
+        console.warn("Could not expand invoice; falling back to payload:", e?.message);
+        inv = invBasic;
+      }
+
+      // Retrieve customer if needed
+      try {
+        if (typeof inv.customer === "string") {
+          customerObj = await stripe.customers.retrieve(inv.customer);
+        } else if (inv.customer?.email || inv.customer?.metadata) {
+          customerObj = inv.customer;
+        }
+      } catch (e) {
+        console.warn("Could not retrieve customer:", e?.message);
+      }
+
+      // First line price/product metadata (if any)
+      try {
+        const line = inv?.lines?.data?.[0];
+        lineMeta = {
+          price: line?.price,
+          product:
+            line?.price?.product && typeof line.price.product !== "string"
+              ? line.price.product
+              : null,
+        };
+      } catch {
+        /* noop */
+      }
+
+      // Resolve brand + locale (order: invoice → customer → price/product → defaults)
+      const { brand, locale } = resolveBrandLocale({
+        inv,
+        customer: customerObj,
+        lineMeta,
+      });
+
+      // Resolve recipient
+      let to = resolveRecipient(inv) || customerObj?.email || null;
+      if (!to) {
+        console.warn("No recipient email found; skipping send.");
+        return res.json({ received: true, mailed: false });
+      }
+
+      // Skip locally suppressed recipients
+      if (isSuppressed(to)) {
+        console.warn("Local-suppressed recipient; skipping send:", to);
+        return res.json({ received: true, mailed: false, suppressed: true });
+      }
+
+      // Choose sender by brand (falls back to default)
+      const cfg = BRAND_CFG[brand] || BRAND_CFG[BRAND_DEFAULT];
+
+      // Centralized suppression (SES account-level)
+      if (await isSuppressedInSES({ region: cfg.region, email: to })) {
+        noteSuppressed(to); // remember locally to avoid re-checks for 24h
+        return res.json({ received: true, mailed: false, suppressed: "ses" });
+      }
+
+      // Detect service from metadata (invoice → price → product), accept both "service" and "serviceID"
+      const service =
+        pickMeta(inv, "service") ||
+        pickMeta(inv, "serviceid") ||
+        pickMeta(lineMeta?.price, "service") ||
+        pickMeta(lineMeta?.price, "serviceid") ||
+        pickMeta(lineMeta?.product, "service") ||
+        pickMeta(lineMeta?.product, "serviceid") ||
+        "invoice-paid";
+
+      // Try to load a GCS template for this service/locale (fallback to en)
+      const amount = formatAmount(inv);
+      const invoiceNo = inv.number || inv.id;
+
+      let subject, text, html, templateSource;
+      const gcsHtml =
+        (await loadTemplate({ brand, service, locale })) ||
+        (await loadTemplate({ brand, service, locale: "en" }));
+
+      if (gcsHtml) {
+        templateSource = "GCS";
+        if (locale === "pl") {
+          subject = `Płatność otrzymana — ${brand === "trueweb" ? "Trueweb" : "Yokweb"}`;
+          text =
+            `Dzień dobry,\r\nOtrzymaliśmy Twoją płatność.\r\n` +
+            `Faktura: ${invoiceNo}\r\nKwota: ${amount}\r\n` +
+            `Dziękujemy,\r\n${brand === "trueweb" ? "Trueweb" : "Yokweb"}`;
+        } else {
+          subject = `Payment received — ${brand === "trueweb" ? "Trueweb" : "Yokweb"}`;
+          text =
+            `Hi,\r\nWe've received your payment.\r\n` +
+            `Invoice: ${invoiceNo}\r\nAmount: ${amount}\r\n` +
+            `Thanks,\r\n${brand === "trueweb" ? "Trueweb" : "Yokweb"}`;
+        }
+        html = renderTemplate(gcsHtml, { invoiceNo, amount });
+      } else {
+        templateSource = "fallback";
+        ({ subject, text, html } = buildMessage({ brand, inv, locale }));
+      }
+
+      // diagnostic log line for quick grepping
+      console.log(
+        `X-Brand=${brand} X-Locale=${locale} X-Service=${service} Template=${templateSource}`
+      );
+
+      try {
+        await sendWithSES({
+          region: cfg.region,
+          from: cfg.from,
+          replyTo: cfg.replyTo,
+          to,
+          subject,
+          text,
+          html,
+          brand,
+          service,
+          locale,
+        });
+        return res.json({ received: true, mailed: true });
+      } catch (err) {
+        console.error("SES send failed:", err);
+        // If SES says address is on suppression list, remember it locally
+        const msg = String(err && (err.message || err.toString() || ""));
+        if (/suppression list|suppressed|complaint/i.test(msg)) {
+          noteSuppressed(to);
+        }
+        // acknowledge to avoid Stripe retry storms
+        return res.json({ received: true, mailed: false, error: "ses_send_failed" });
+      }
+    }
+
+    return res.json({ received: true });
+  }
+);
 
 app.get("/", (_req, res) => res.status(200).send("OK"));
 const port = process.env.PORT || 8080;
