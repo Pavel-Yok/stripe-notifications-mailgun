@@ -272,8 +272,11 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
     // Try to load a GCS template for this service/locale
     const service =
   pickMeta(inv, "service") ||
+  pickMeta(inv, "serviceid") ||
   pickMeta(lineMeta?.price, "service") ||
+  pickMeta(lineMeta?.price, "serviceid") ||
   pickMeta(lineMeta?.product, "service") ||
+  pickMeta(lineMeta?.product, "serviceid") ||
   "invoice-paid";
 
     const amount = formatAmount(inv);
