@@ -19,8 +19,9 @@ Optional:
   SES_REPLY_TO_YOKWEB="billing@yokweb.com"
   SES_FROM_TRUEWEB="Trueweb Billing <no-reply@billing.trueweb.pl>"
   SES_REPLY_TO_TRUEWEB="billing@trueweb.pl"
-  TEST_TO="you@example.com"  // override for tests / @example.com recipients
-  TEMPLATES_BUCKET="email-templates-yokweb-trueweb" // GCS bucket with templates
+  TEST_TO="you@example.com"               # override for tests / @example.com recipients
+  TEMPLATES_BUCKET="email-templates-yokweb-trueweb"  # GCS bucket for templates
+  SES_CONFIG_SET="deliverability-prod"    # optional SES Configuration Set name
 
 Notes:
 - From addresses use verified SES domains; mailbox for no-reply is not required.
@@ -93,12 +94,31 @@ function getSesClient(region) {
   return sesClients.get(region);
 }
 
-async function sendWithSES({ region, from, replyTo, to, subject, text, html }) {
+async function sendWithSES({
+  region,
+  from,
+  replyTo,
+  to,
+  subject,
+  text,
+  html,
+  brand,
+  service,
+  locale,
+}) {
   const ses = getSesClient(region);
   const cmd = new SendEmailCommand({
     FromEmailAddress: from,
     Destination: { ToAddresses: [to] },
     ReplyToAddresses: replyTo ? [replyTo] : [],
+    // message tags for SES analytics/deliverability
+    EmailTags: [
+      { Name: "brand", Value: brand ?? "unknown" },
+      { Name: "service", Value: service ?? "invoice-paid" },
+      { Name: "locale", Value: locale ?? "en" },
+    ],
+    // optional SES Configuration Set (if configured)
+    ConfigurationSetName: process.env.SES_CONFIG_SET || undefined,
     Content: {
       Simple: {
         Subject: { Data: subject, Charset: "UTF-8" },
@@ -135,7 +155,7 @@ function noteSuppressed(email) {
 
 /* ====== content helpers (fallbacks) ====== */
 function formatAmount(inv) {
-  const cents = (inv.amount_paid ?? inv.amount_due ?? 0);
+  const cents = inv.amount_paid ?? inv.amount_due ?? 0;
   const amount = cents / 100;
   const cur = String(inv.currency || "").toUpperCase();
   return `${amount.toFixed(2)} ${cur}`;
@@ -335,7 +355,7 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
     }
 
     // diagnostic log line for quick grepping
-    console.log(`X-Brand=${brand} X-Locale=${locale} Template=${templateSource}`);
+    console.log(`X-Brand=${brand} X-Locale=${locale} X-Service=${service} Template=${templateSource}`);
 
     try {
       await sendWithSES({
@@ -346,6 +366,9 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
         subject,
         text,
         html,
+        brand,
+        service,
+        locale,
       });
       return res.json({ received: true, mailed: true });
     } catch (err) {
