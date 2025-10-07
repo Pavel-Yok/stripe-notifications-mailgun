@@ -42,6 +42,36 @@ const BRAND_CFG = {
   },
 };
 
+import { Storage } from "@google-cloud/storage";
+
+const TEMPLATES_BUCKET = process.env.TEMPLATES_BUCKET || "";
+const storage = new Storage(); // uses Cloud Run's service account
+const tplCache = new Map();
+
+async function loadTemplate({ brand, service, locale }) {
+  if (!TEMPLATES_BUCKET) return null;
+  const key = `${brand}/${service}/${locale}.html`;
+  if (tplCache.has(key)) return tplCache.get(key);
+
+  try {
+    const file = storage.bucket(TEMPLATES_BUCKET).file(key);
+    const [buf] = await file.download();
+    const html = buf.toString("utf8");
+    tplCache.set(key, html);
+    return html;
+  } catch {
+    return null;
+  }
+}
+
+function renderTemplate(tpl, vars) {
+  return tpl.replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_, k) =>
+    Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : ""
+  );
+}
+
+
+
 // Cache SES clients by region
 const sesClients = new Map();
 function getSesClient(region) {
@@ -216,22 +246,57 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
       return res.json({ received: true, mailed: false });
     }
 
-    // Choose sender by brand; render content
-    const cfg = BRAND_CFG[brand] || BRAND_CFG[BRAND_DEFAULT];
-    const { subject, text, html } = buildMessage({ brand, inv, locale });
+// Choose sender by brand
+const cfg = BRAND_CFG[brand] || BRAND_CFG[BRAND_DEFAULT];
 
-    try {
-      await sendWithSES({
-        region: cfg.region,
-        from: cfg.from,
-        replyTo: cfg.replyTo,
-        to,
-        subject,
-        text,
-        html,
-      });
-    } catch (err) {
-      console.error("SES send failed:", err);
+// Try to load a GCS template for this service/locale
+const service = "invoice-paid";
+const amount = formatAmount(inv);
+const invoiceNo = inv.number || inv.id;
+
+// Fallback subject/text (kept simple)
+let subject, text;
+if (locale === "pl") {
+  subject = `Płatność otrzymana — ${brand === "trueweb" ? "Trueweb" : "Yokweb"}`;
+  text =
+    `Dzień dobry,\r\nOtrzymaliśmy Twoją płatność.\r\n` +
+    `Faktura: ${invoiceNo}\r\nKwota: ${amount}\r\n` +
+    `Dziękujemy,\r\n${brand === "trueweb" ? "Trueweb" : "Yokweb"}`;
+} else {
+  subject = `Payment received — ${brand === "trueweb" ? "Trueweb" : "Yokweb"}`;
+  text =
+    `Hi,\r\nWe've received your payment.\r\n` +
+    `Invoice: ${invoiceNo}\r\nAmount: ${amount}\r\n` +
+    `Thanks,\r\n${brand === "trueweb" ? "Trueweb" : "Yokweb"}`;
+}
+
+// Load template with fallback: exact locale → EN → built-in
+let html =
+  (await loadTemplate({ brand, service, locale })) ||
+  (await loadTemplate({ brand, service, locale: "en" }));
+if (!html) {
+  html = buildMessage({ brand, inv, locale }).html;
+} else {
+  html = renderTemplate(html, { invoiceNo, amount });
+}
+
+try {
+  await sendWithSES({
+    region: cfg.region,
+    from: cfg.from,
+    replyTo: cfg.replyTo,
+    to,
+    subject,
+    text,
+    html,
+  });
+} catch (err) {
+  console.error("SES send failed:", err);
+  return res.json({ received: true, mailed: false, error: "ses_send_failed" });
+}
+
+
+      
       // Acknowledge webhook anyway to avoid Stripe retry storms
       return res.json({ received: true, mailed: false, error: "ses_send_failed" });
     }
