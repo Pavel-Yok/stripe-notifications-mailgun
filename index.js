@@ -270,7 +270,12 @@ app.post("/webhook", bodyParser.raw({ type: "application/json" }), async (req, r
     const cfg = BRAND_CFG[brand] || BRAND_CFG[BRAND_DEFAULT];
 
     // Try to load a GCS template for this service/locale
-    const service = "invoice-paid";
+    const service =
+  pickMeta(inv, "service") ||
+  pickMeta(lineMeta?.price, "service") ||
+  pickMeta(lineMeta?.product, "service") ||
+  "invoice-paid";
+
     const amount = formatAmount(inv);
     const invoiceNo = inv.number || inv.id;
 
