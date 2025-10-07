@@ -25,7 +25,7 @@ Optional:
 Notes:
 - From addresses use verified SES domains; mailbox for no-reply is not required.
 - Reply-To should be a real inbox you monitor.
-- SES creds come via AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
+- SES creds come via AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY. 
 ========================= */
 
 const BRAND_DEFAULT = (process.env.BRAND_DEFAULT || "yokweb").toLowerCase();
