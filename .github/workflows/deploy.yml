@@ -62,6 +62,6 @@ jobs:
             --service-account stripe-webhooks-mailer-sa@yokweb-billing-001.iam.gserviceaccount.com \
             --allow-unauthenticated \
             --memory 512Mi --cpu 1 --concurrency 50 --timeout 30 \
-            --set-env-vars BRAND_DEFAULT=yokweb,NODE_ENV=production,TEST_TO=pawel-czarnowski@wp.pl \
+            --set-env-vars BRAND_DEFAULT=yokweb,NODE_ENV=production,TEST_TO=pawel-czarnowski@wp.pl,TEMPLATES_BUCKET=email-templates-yokweb-trueweb \
             --set-secrets STRIPE_SECRET_KEY=STRIPE_SECRET_KEY:latest,STRIPE_WEBHOOK_SECRET=STRIPE_WEBHOOK_SECRET:latest,AWS_ACCESS_KEY_ID=AWS_ACCESS_KEY_ID:latest,AWS_SECRET_ACCESS_KEY=AWS_SECRET_ACCESS_KEY:latest \
             --verbosity=debug
