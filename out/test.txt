@@ -1,1 +1,0 @@
-Yokweb – payment-paid Thanks for your purchase — payment received. Order INV-12345 {{> header}} Hello Jane Customer, This is a stub for payment-paid (service: comp-aud , locale: en ). Replace this file with your real content. View order {{> footer}}
