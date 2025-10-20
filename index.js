@@ -397,7 +397,7 @@ const billing = {
 // call renderer — it will normalize legacy ids like 'invoice-paid' -> 'payment-paid'
 const { html, text, subject } = await renderEmail({
 
-  brandKey: (brand || process.env.BRAND_DEFAULT || 'yokweb'),   // 'yokweb' | 'trueweb'
+  brandKey: 'yokweb',   // 'yokweb' | 'trueweb'
   locale,                     // 'en' | 'pl'
   notificationId: service,    // e.g. 'invoice-paid' (legacy ok)
   serviceId: null,            // set if you later use per-product templates
