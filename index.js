@@ -11,6 +11,8 @@ import {
   GetSuppressedDestinationCommand,
 } from "@aws-sdk/client-sesv2";
 import { Storage } from "@google-cloud/storage";
+import { renderEmail } from './src/renderEmail.js';
+
 
 /* ========= ENV =========
 Required:
@@ -113,28 +115,36 @@ async function sendWithSES({
   locale,
 }) {
   const ses = getSesClient(region);
+
+// ---- NEW: build email via central renderer ----
+console.log('[mail] using NEW renderer');
+
+const { html, text, subject } = await renderEmail({
+  brandKey,        // your existing brand (e.g. 'yokweb' / 'trueweb')
+  locale,          // your existing locale ('en' / 'pl')
+  notificationId,  // e.g. 'invoice-paid' / 'payment-failed' / 'refund-issued' / 'subscription-renewed'
+  serviceId,       // if you resolve a per-product/service id; otherwise leave as is
+  systemData: (typeof systemData !== 'undefined' ? systemData : {})  // if you already build this, use it; else keep {}
+});
+// ---- END NEW ----
+
   const cmd = new SendEmailCommand({
-    FromEmailAddress: from,
-    Destination: { ToAddresses: [to] },
-    ReplyToAddresses: replyTo ? [replyTo] : [],
-    // message tags for SES analytics/deliverability
-    EmailTags: [
-      { Name: "brand", Value: brand ?? "unknown" },
-      { Name: "service", Value: service ?? "invoice-paid" },
-      { Name: "locale", Value: locale ?? "en" },
-    ],
-    // optional SES Configuration Set (if configured)
-    ConfigurationSetName: process.env.SES_CONFIG_SET || undefined,
-    Content: {
-      Simple: {
-        Subject: { Data: subject, Charset: "UTF-8" },
-        Body: {
-          Html: html ? { Data: html, Charset: "UTF-8" } : undefined,
-          Text: text ? { Data: text, Charset: "UTF-8" } : undefined,
-        },
-      },
-    },
-  });
+  FromEmailAddress: from,
+  Destination: { ToAddresses: [to] },
+  ReplyToAddresses: replyTo ? [replyTo] : [],
+  Content: {
+    Simple: {
+      Subject: { Data: subject, Charset: "UTF-8" },
+      Body: {
+        Html: { Data: html, Charset: "UTF-8" },
+        Text: { Data: text || " ", Charset: "UTF-8" } // minimal fallback
+      }
+    }
+  },
+  // keep your config set if you had one:
+  // ConfigurationSetName: process.env.SES_CONFIG_SET || undefined
+});
+
   const resp = await ses.send(cmd);
   console.log("SES MessageId:", resp?.MessageId, "to:", to, "region:", region);
   return resp;
@@ -376,40 +386,46 @@ app.post(
         pickMeta(lineMeta?.product, "serviceid") ||
         "invoice-paid";
 
-      // Try to load a GCS template for this service/locale (fallback to en)
-      const amount = formatAmount(inv);
-      const invoiceNo = inv.number || inv.id;
+      // NEW: render via central pipeline (GCS templates + brand JSON + central CSS)
+console.log("[mail] using NEW renderer");
 
-      let subject, text, html, templateSource;
-      const gcsHtml =
-        (await loadTemplate({ brand, service, locale })) ||
-        (await loadTemplate({ brand, service, locale: "en" }));
+// derive currency & amount numeric for templates
+const currency = String(inv.currency || "").toUpperCase();
+const amountNumber = ((inv.amount_paid ?? inv.amount_due ?? 0) / 100).toFixed(2);
 
-      if (gcsHtml) {
-        templateSource = "GCS";
-        if (locale === "pl") {
-          subject = `Płatność otrzymana — ${brand === "trueweb" ? "Trueweb" : "Yokweb"}`;
-          text =
-            `Dzień dobry,\r\nOtrzymaliśmy Twoją płatność.\r\n` +
-            `Faktura: ${invoiceNo}\r\nKwota: ${amount}\r\n` +
-            `Dziękujemy,\r\n${brand === "trueweb" ? "Trueweb" : "Yokweb"}`;
-        } else {
-          subject = `Payment received — ${brand === "trueweb" ? "Trueweb" : "Yokweb"}`;
-          text =
-            `Hi,\r\nWe've received your payment.\r\n` +
-            `Invoice: ${invoiceNo}\r\nAmount: ${amount}\r\n` +
-            `Thanks,\r\n${brand === "trueweb" ? "Trueweb" : "Yokweb"}`;
-        }
-        html = renderTemplate(gcsHtml, { invoiceNo, amount });
-      } else {
-        templateSource = "fallback";
-        ({ subject, text, html } = buildMessage({ brand, inv, locale }));
-      }
+// optional helpers for placeholders
+const trackOrder =
+  inv.hosted_invoice_url ||
+  inv.invoice_pdf ||
+  null;
 
-      // diagnostic log line for quick grepping
-      console.log(
-        `X-Brand=${brand} X-Locale=${locale} X-Service=${service} Template=${templateSource}`
-      );
+const billing = {
+  name: inv.customer_name || customerObj?.name || "",
+  address_line1: inv.customer_address?.line1 || "",
+  address_line2: inv.customer_address?.line2 || "",
+  postcode: inv.customer_address?.postal_code || "",
+  city: inv.customer_address?.city || "",
+  country: inv.customer_address?.country || "",
+  vat_id: (inv.customer_tax_ids && inv.customer_tax_ids[0]?.value) || ""
+};
+
+// call renderer — it will normalize legacy ids like 'invoice-paid' -> 'payment-paid'
+const { html, text, subject } = await renderEmail({
+  brandKey: brand,            // 'yokweb' | 'trueweb'
+  locale,                     // 'en' | 'pl'
+  notificationId: service,    // e.g. 'invoice-paid' (legacy ok)
+  serviceId: null,            // set if you later use per-product templates
+  systemData: {
+    customerName: customerObj?.name || customerObj?.email || "Customer",
+    invoiceNo,
+    amount: amountNumber,
+    currency,
+    trackOrder,
+    purchaseSite: brand === "trueweb" ? "trueweb.pl" : "yokweb.com",
+    billing
+  }
+});
+
 
       try {
         await sendWithSES({
