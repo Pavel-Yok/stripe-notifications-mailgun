@@ -374,6 +374,12 @@ app.post(
         pickMeta(lineMeta?.product, "serviceid") ||
         "invoice-paid";
 
+
+console.log(`[dbg] env TEMPLATES_BUCKET=${process.env.TEMPLATES_BUCKET || 'unset'} ASSETS_BUCKET=${process.env.ASSETS_BUCKET || 'unset'}`);
+console.log(`[dbg] intent brand=${brand} locale=${locale} service=${service}`);
+
+
+
       // NEW: render via central pipeline (GCS templates + brand JSON + central CSS)
 console.log("[mail] using NEW renderer");
 const invoiceNo = inv.number || inv.id;
@@ -417,7 +423,7 @@ const { html, text, subject } = await renderEmail({
   }
 });
 
-
+console.log(`[dbg] renderer subject="${subject}" html_len=${(html || '').length} text_len=${(text || '').length}`);
       try {
         await sendWithSES({
           region: cfg.region,
