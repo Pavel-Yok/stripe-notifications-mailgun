@@ -1,0 +1,16 @@
+{
+  "brandName": "Yokweb",
+  "brandSite": "https://yokweb.com",
+  "brandAddress": "Your registered address here",
+  "companyNo": "00000000",
+  "vatNo": "PL0000000000",
+  "supportEmail": "support@yokweb.com",
+  "supportHours": "09:00–17:00",
+  "supportDays": "Mon–Fri",
+  "timeZone": "CET/CEST",
+  "securityEmail": "security@yokweb.com",
+  "privacyLink": "https://yokweb.com/privacy",
+  "termsLink": "https://yokweb.com/terms",
+  "logoUrl": "https://yokweb.com/yokweb-emails.png",
+  "assets": { "cssUrl": "https://storage.googleapis.com/yokweb-billing-001-email-assets/email.css?v=init" }
+}

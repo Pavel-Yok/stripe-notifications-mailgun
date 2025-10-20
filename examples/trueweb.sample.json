@@ -1,0 +1,16 @@
+{
+  "brandName": "Trueweb",
+  "brandSite": "https://trueweb.example",
+  "brandAddress": "Your registered address here",
+  "companyNo": "00000000",
+  "vatNo": "PL0000000000",
+  "supportEmail": "support@trueweb.example",
+  "supportHours": "09:00–17:00",
+  "supportDays": "Mon–Fri",
+  "timeZone": "CET/CEST",
+  "securityEmail": "security@trueweb.example",
+  "privacyLink": "https://trueweb.example/privacy",
+  "termsLink": "https://trueweb.example/terms",
+  "logoUrl": "https://trueweb.example/logo.png",
+  "assets": { "cssUrl": "https://storage.googleapis.com/yokweb-billing-001-email-assets/email.css?v=init" }
+}
