@@ -110,45 +110,30 @@ async function sendWithSES({
   subject,
   text,
   html,
-  brand,
-  service,
-  locale,
 }) {
   const ses = getSesClient(region);
 
-// ---- NEW: build email via central renderer ----
-console.log('[mail] using NEW renderer');
-
-const { html, text, subject } = await renderEmail({
-  brandKey,        // your existing brand (e.g. 'yokweb' / 'trueweb')
-  locale,          // your existing locale ('en' / 'pl')
-  notificationId,  // e.g. 'invoice-paid' / 'payment-failed' / 'refund-issued' / 'subscription-renewed'
-  serviceId,       // if you resolve a per-product/service id; otherwise leave as is
-  systemData: (typeof systemData !== 'undefined' ? systemData : {})  // if you already build this, use it; else keep {}
-});
-// ---- END NEW ----
-
   const cmd = new SendEmailCommand({
-  FromEmailAddress: from,
-  Destination: { ToAddresses: [to] },
-  ReplyToAddresses: replyTo ? [replyTo] : [],
-  Content: {
-    Simple: {
-      Subject: { Data: subject, Charset: "UTF-8" },
-      Body: {
-        Html: { Data: html, Charset: "UTF-8" },
-        Text: { Data: text || " ", Charset: "UTF-8" } // minimal fallback
+    FromEmailAddress: from,
+    Destination: { ToAddresses: [to] },
+    ReplyToAddresses: replyTo ? [replyTo] : [],
+    Content: {
+      Simple: {
+        Subject: { Data: subject, Charset: "UTF-8" },
+        Body: {
+          Html: { Data: html, Charset: "UTF-8" },
+          Text: { Data: text || " ", Charset: "UTF-8" }
+        }
       }
-    }
-  },
-  // keep your config set if you had one:
-  // ConfigurationSetName: process.env.SES_CONFIG_SET || undefined
-});
+    },
+    // ConfigurationSetName: process.env.SES_CONFIG_SET || undefined
+  });
 
   const resp = await ses.send(cmd);
   console.log("SES MessageId:", resp?.MessageId, "to:", to, "region:", region);
   return resp;
 }
+
 
 /* ---- SES account-level suppression check (centralized) ---- */
 async function isSuppressedInSES({ region, email }) {
@@ -388,7 +373,7 @@ app.post(
 
       // NEW: render via central pipeline (GCS templates + brand JSON + central CSS)
 console.log("[mail] using NEW renderer");
-
+const invoiceNo = inv.number || inv.id;
 // derive currency & amount numeric for templates
 const currency = String(inv.currency || "").toUpperCase();
 const amountNumber = ((inv.amount_paid ?? inv.amount_due ?? 0) / 100).toFixed(2);
