@@ -16,10 +16,23 @@ const LEGACY_TO_NEW = {
 const normalizeNotificationId = (id) => LEGACY_TO_NEW[id] || id;
 
 async function loadBrand(brandKey) {
-  const url = `${ASSETS_BUCKET}/brands/${brandKey}.json`;
-  const json = await readGcsText(url);
-  return JSON.parse(json);
+  const bucket = process.env.ASSETS_BUCKET || "";
+  if (!bucket) {
+    throw new Error("ASSETS_BUCKET env not set");
+  }
+  if (!brandKey) {
+    throw new Error("brandKey is empty");
+  }
+  const path = `brands/${brandKey}.json`;
+  console.log("[dbg] loadBrand:", { bucket, path });
+
+  // readGcsText(bucketName, filePath) — we pass NAME ONLY + relative path
+  const jsonText = await readGcsText(bucket, path);
+  // strip BOM if present
+  const clean = jsonText.replace(/^\uFEFF/, "");
+  return JSON.parse(clean);
 }
+
 
 async function loadTemplate({ brand, notificationId, serviceId, locale }) {
   const tryPaths = [
