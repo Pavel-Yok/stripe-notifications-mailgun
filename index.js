@@ -395,6 +395,8 @@ const billing = {
 };
 
 // call renderer — it will normalize legacy ids like 'invoice-paid' -> 'payment-paid'
+console.log(`[dbg] brand=${brand} locale=${locale} service=${service} to=${to || 'null'}`);
+
 const { html, text, subject } = await renderEmail({
 
   brandKey: 'yokweb',   // 'yokweb' | 'trueweb'
