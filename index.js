@@ -291,7 +291,10 @@ app.post(
 
     console.log("Stripe event:", event.type);
 
-    if (event.type === "invoice.paid") {
+    if (
+  event.type === "invoice.paid" ||
+  event.type === "invoice.payment_succeeded"
+) {
       const invBasic = event.data.object;
 
       // Expand invoice to get lines (price.product) + customer
