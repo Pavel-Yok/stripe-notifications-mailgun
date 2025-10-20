@@ -9,19 +9,22 @@ const storage = new Storage();
  * @param {string} filePath   - e.g. "brands/yokweb.json"
  * @returns {Promise<string>}
  */
-export async function readGcsText(bucketName, filePath) {
-  if (!bucketName || !filePath) {
-    throw new Error(
-      `readGcsText: missing bucketName or filePath (bucket="${bucketName}", path="${filePath}")`
-    );
+export async function readGcsText(storage, bucketName, filePath) {
+  if (!bucketName) {
+    throw new Error("GCS: bucketName is empty");
   }
+  // be tolerant if someone sets env with gs://
+  bucketName = bucketName.replace(/^gs:\/\//, "");
+
+  if (!filePath) {
+    throw new Error("GCS: filePath is empty");
+  }
+
   const file = storage.bucket(bucketName).file(filePath);
   const [buf] = await file.download();
-  let text = buf.toString("utf8");
-  // strip BOM if present
-  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-  return text;
+  return bomToUtf8(buf);
 }
+
 
 /**
  * Same as readGcsText but returns null on 404 and logs other errors.
