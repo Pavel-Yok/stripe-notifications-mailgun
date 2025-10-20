@@ -7,43 +7,46 @@ const TEMPLATES_BUCKET = process.env.TEMPLATES_BUCKET; // e.g., gs://yokweb-bill
 const ASSETS_BUCKET    = process.env.ASSETS_BUCKET;    // e.g., gs://yokweb-billing-001-email-assets
 
 const LEGACY_TO_NEW = {
-  'invoice-paid': 'payment-paid',
-  'subscription-renewed': 'payment-paid-sub-renew',
+  "invoice-paid": "payment-paid",
+  "subscription-renewed": "payment-paid-sub-renew",
   // unchanged:
-  'payment-failed': 'payment-failed',
-  'refund-issued': 'refund-issued'
+  "payment-failed": "payment-failed",
+  "refund-issued": "refund-issued"
 };
 const normalizeNotificationId = (id) => LEGACY_TO_NEW[id] || id;
 
 async function loadBrand(brandKey) {
-  const url = ${ASSETS_BUCKET}/brands/.json;
+  const url = `${ASSETS_BUCKET}/brands/${brandKey}.json`;
   const json = await readGcsText(url);
   return JSON.parse(json);
 }
 
 async function loadTemplate({ brand, notificationId, serviceId, locale }) {
   const tryPaths = [
-    ${TEMPLATES_BUCKET}/trueweb//.html,
-    ${TEMPLATES_BUCKET}/trueweb//en.html,
-    ${TEMPLATES_BUCKET}/trueweb/services//.html,
-    ${TEMPLATES_BUCKET}/trueweb/services//en.html,
+    `${TEMPLATES_BUCKET}/${brand}/${notificationId}/${locale}.html`,
+    `${TEMPLATES_BUCKET}/${brand}/${notificationId}/en.html`,
+    `${TEMPLATES_BUCKET}/${brand}/services/${serviceId}/${locale}.html`,
+    `${TEMPLATES_BUCKET}/${brand}/services/${serviceId}/en.html`
   ];
   for (const p of tryPaths) {
     try {
       return await readGcsText(p);
-    } catch { /* try next */ }
+    } catch {
+      // try next
+    }
   }
-  return \<!doctype html><html><body><p>Fallback: \ (\)</p></body></html>\;
+  return `<!doctype html><html><body><p>Fallback: ${notificationId} (${locale})</p></body></html>`;
 }
 
 async function loadSubject({ brand, notificationId, locale }) {
   const tryPaths = [
-    \\/\trueweb/\/\.subject.txt\,
-    \\/\trueweb/\/en.subject.txt\,
+    `${TEMPLATES_BUCKET}/${brand}/${notificationId}/${locale}.subject.txt`,
+    `${TEMPLATES_BUCKET}/${brand}/${notificationId}/en.subject.txt`
   ];
   for (const p of tryPaths) {
     try {
-      return await readGcsText(p);
+      const txt = await readGcsText(p);
+      return txt.replace(/^\uFEFF/, ''); // strip BOM
     } catch {}
   }
   return null;
@@ -58,9 +61,9 @@ async function inlineCss(html, brand) {
   if (!res.ok) return html;
   const css = await res.text();
 
-  const injected = html.includes('</head>')
-    ? html.replace('</head>', \<style>\</style></head>\)
-    : \<style>\</style>\\;
+  const injected = html.includes("</head>")
+    ? html.replace("</head>", `<style>${css}</style></head>`)
+    : `<style>${css}</style>${html}`;
 
   return juice(injected);
 }
@@ -93,9 +96,9 @@ export async function renderEmail({ brandKey, locale, notificationId, serviceId,
 
   // Quick text alternative
   const text = html
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 
   return { html, text, subject };
@@ -103,10 +106,15 @@ export async function renderEmail({ brandKey, locale, notificationId, serviceId,
 
 function defaultSubject(notificationId, data) {
   switch (notificationId) {
-    case 'payment-paid': return \\: Payment received — order \\.trim();
-    case 'payment-failed': return \\: Payment failed\;
-    case 'payment-paid-sub-renew': return \\: Subscription renewed\;
-    case 'refund-issued': return \\: Refund processed\;
-    default: return \\: Update\;
+    case "payment-paid":
+      return `${data.brand.brandName}: Payment received — order ${data.invoiceNo || ""}`.trim();
+    case "payment-failed":
+      return `${data.brand.brandName}: Payment failed`;
+    case "payment-paid-sub-renew":
+      return `${data.brand.brandName}: Subscription renewed`;
+    case "refund-issued":
+      return `${data.brand.brandName}: Refund processed`;
+    default:
+      return `${data.brand.brandName}: Update`;
   }
 }
