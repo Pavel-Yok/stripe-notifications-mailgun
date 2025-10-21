@@ -408,7 +408,7 @@ console.log(`[dbg] brand=${brand} locale=${locale} service=${service} to=${to ||
 
 const { html, text, subject } = await renderEmail({
 
-  brandKey: 'brand',   // 'yokweb' | 'trueweb'
+  brandKey: brand,   // 'yokweb' | 'trueweb'
   locale,                     // 'en' | 'pl'
   notificationId: service,    // e.g. 'invoice-paid' (legacy ok)
   serviceId: null,            // set if you later use per-product templates
